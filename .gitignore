@@ -1,0 +1,26 @@
+# Environment / secrets
+.env
+*.env
+
+# Report outputs (generated at runtime, not stored in git)
+TruAge_*.html
+TruAge_*.pdf
+hubspot_pull.json
+archive/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Old script versions
+*.py-old
+*.py-old1
+*.py-old2
+
+# Windows
+run_report.bat
+Thumbs.db
