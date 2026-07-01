@@ -1136,6 +1136,13 @@ def _page1(M, asof, asof_label, pulled_ts, pulled_fmt, payload, A, b):
     kpi_pending = M["pending_stores_real"] if M["has_store_data"] else "—"
     fwd_count   = len(M["fwd_calendar_top5"])
 
+    def _fmt_or_dash(value):
+        """Thousands-separator format for numbers; pass placeholder strings
+        (e.g. the "—" shown when has_store_data is False) through unchanged.
+        Prevents ValueError: Cannot specify ',' with 's' when store-level
+        data is temporarily unavailable from HubSpot."""
+        return f"{value:,}" if isinstance(value, (int, float)) else str(value)
+
     # SW top 2 sub
     sw_top = M["sw_top5"][:2]
     sw_sub = " · ".join(f"{short_name(d.name,16)} {d.amount:,}" for d in sw_top) if sw_top else "see page 2"
@@ -1300,8 +1307,8 @@ def _page1(M, asof, asof_label, pulled_ts, pulled_fmt, payload, A, b):
 
     kpi_cells_html = "".join([
         _kpi("Active Stores",     f"{active:,}{h(star_active)}", act_sub,          act_cls,  act_arrow),
-        _kpi("Ready",             f"{kpi_ready:,}",              "onboarded · not transacting",          rdy_cls,  rdy_arrow),
-        _kpi("Pending",           f"{kpi_pending:,}",            "contracts complete · not onboarded",   pnd_cls,  pnd_arrow),
+        _kpi("Ready",             _fmt_or_dash(kpi_ready),       "onboarded · not transacting",          rdy_cls,  rdy_arrow),
+        _kpi("Pending",           _fmt_or_dash(kpi_pending),     "contracts complete · not onboarded",   pnd_cls,  pnd_arrow),
         _kpi("Total Stores",      f"{M['stores_total_real']:,}", "all status buckets · ex-test",         tot_cls,  tot_arrow),
         _kpi("Awaiting Software", f"{M['sw_stores']:,}{h(star_sw)}", h(sw_sub),    sw_cls,   sw_arrow),
         _kpi("Fwd Calendar (14d)",str(fwd_count),                f"target {fwd_target}+",                fwd_cls,  fwd_arrow),

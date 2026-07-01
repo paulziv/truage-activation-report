@@ -11,11 +11,15 @@ import os
 import subprocess
 import threading
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, render_template_string
 from dotenv import load_dotenv
+
+import alerting
+import run_history
 
 load_dotenv()
 
@@ -44,6 +48,7 @@ def run_pipeline() -> None:
     with _lock:
         _last_run["status"] = "running"
         log.info("Pipeline starting…")
+        start = time.monotonic()
         try:
             # Step 1: fetch
             fetch = subprocess.run(
@@ -69,11 +74,31 @@ def run_pipeline() -> None:
             _last_run["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             _last_run["error"]     = None
             log.info("Report generated: %s", REPORT_PATH)
+            run_history.record_run(
+                status="ok",
+                duration_seconds=time.monotonic() - start,
+            )
 
         except Exception as exc:
             _last_run["status"] = "error"
             _last_run["error"]  = str(exc)
             log.error("Pipeline error: %s", exc)
+
+            msg = str(exc)
+            if msg.startswith("Fetch failed"):
+                kind = "fetch_failed"
+            elif msg.startswith("Generate failed"):
+                kind = "generate_failed"
+            else:
+                kind = "unexpected_error"
+
+            run_history.record_run(
+                status="error",
+                duration_seconds=time.monotonic() - start,
+                step=kind,
+                error=msg[:4000],  # keep history entries bounded
+            )
+            alerting.send_crash_alert(kind, msg, exc)
 
 
 # ── Auto-run on startup ───────────────────────────────────────────────────────
@@ -134,6 +159,15 @@ def health():
 @app.route("/status")
 def status():
     return jsonify(_last_run)
+
+
+@app.route("/history")
+def history():
+    """Recent pipeline runs (success/failure, timing, errors) — for reviewing
+    what happened across recent runs beyond what's convenient to scroll through
+    in raw Railway logs. Resets on redeploy (stored in /tmp)."""
+    limit = request.args.get("limit", default=50, type=int)
+    return jsonify(run_history.recent_runs(limit=limit))
 
 
 @app.route("/")
