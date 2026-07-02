@@ -297,6 +297,10 @@ def fetch_all_deals(token):
         after = paging.get("after")
         if not after:
             break
+        # Small pacing delay between pages — spreads requests out so we're
+        # less likely to hit HubSpot's per-second rate limit in the first
+        # place, complementing the reactive retry/backoff in hs_post.
+        time.sleep(0.15)
 
     return all_deals
 
@@ -346,6 +350,7 @@ def fetch_all_stores(token):
         after = paging.get("after")
         if not after:
             break
+        time.sleep(0.15)  # see rationale in fetch_all_deals
 
     return all_stores
 
