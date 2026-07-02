@@ -195,7 +195,16 @@ def compute_metrics(payload, deals, asof):
     M["by_stage"] = by_stage
 
     def stage_sum(sid):
-        return sum(d.amount for d in by_stage.get(sid, []))
+        # Test-record exclusion is required here, not optional — this feeds
+        # every mid-funnel headline number (In Lab, Awaiting SW, Awaiting
+        # Activation, Awaiting Transactions, Onboarding) AND the Committed
+        # Pipeline stacked bar. committed_stores (the Funnel Conversion
+        # denominator, below) already excludes test records from the same
+        # population. Without this exclusion here too, a single test deal
+        # sitting in a mid-funnel stage inflates the bar's total but not the
+        # funnel denominator, so the two numbers silently stop reconciling —
+        # this is what produced the 9,949-vs-9,839 discrepancy.
+        return sum(d.amount for d in by_stage.get(sid, []) if not d.is_test_record())
 
     def stage_count(sid):
         return len(by_stage.get(sid, []))
@@ -620,12 +629,24 @@ def compute_metrics(payload, deals, asof):
     M["anomalies"] = A
 
     # --- Funnel conversion ---
-    committed_stores = sum(
+    # Sum every non-active committed-pipeline stage (test-excluded, matching
+    # stage_sum() above), then add M["active_stores"] rather than re-summing
+    # deal amounts for the active stage separately. Active Stores has two
+    # possible sources — a Store-status count vs. a deal-amount sum — that
+    # disagree by design (deal amounts lag real activation status). Every
+    # other number on this page already uses M["active_stores"] as the one
+    # authoritative source; recomputing a second, different "active" number
+    # here just to add it into committed_stores was the other half of why
+    # the Committed Pipeline total and this funnel's denominator didn't
+    # reconcile (9,949 vs 9,839 in the 2026-07-01 report).
+    committed_stores_excl_active = sum(
         d.amount for d in deals
         if d.stage not in {"closedlost"}
         and d.stage not in EARLY_FUNNEL_STAGES
+        and d.stage not in active_ids
         and not d.is_test_record()
     )
+    committed_stores = committed_stores_excl_active + M["active_stores"]
     M["committed_stores"] = committed_stores
     M["funnel_conv_pct"]  = round(100 * M["active_stores"] / max(1, committed_stores))
 
