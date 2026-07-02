@@ -29,6 +29,7 @@ import json
 import math
 import re
 import statistics
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1134,6 +1135,7 @@ def _page1(M, asof, asof_label, pulled_ts, pulled_fmt, payload, A, b):
     star_sw     = "*" if any(d.is_test_record() for d in M["by_stage"].get(M["sw_id"], [])) else ""
     kpi_ready   = M["ready_stores_real"]   if M["has_store_data"] else "—"
     kpi_pending = M["pending_stores_real"] if M["has_store_data"] else "—"
+    kpi_total   = M["stores_total_real"]   if M["has_store_data"] else "—"
     fwd_count   = len(M["fwd_calendar_top5"])
 
     def _fmt_or_dash(value):
@@ -1309,7 +1311,7 @@ def _page1(M, asof, asof_label, pulled_ts, pulled_fmt, payload, A, b):
         _kpi("Active Stores",     f"{active:,}{h(star_active)}", act_sub,          act_cls,  act_arrow),
         _kpi("Ready",             _fmt_or_dash(kpi_ready),       "onboarded · not transacting",          rdy_cls,  rdy_arrow),
         _kpi("Pending",           _fmt_or_dash(kpi_pending),     "contracts complete · not onboarded",   pnd_cls,  pnd_arrow),
-        _kpi("Total Stores",      f"{M['stores_total_real']:,}", "all status buckets · ex-test",         tot_cls,  tot_arrow),
+        _kpi("Total Stores",      _fmt_or_dash(kpi_total),       "all status buckets · ex-test",         tot_cls,  tot_arrow),
         _kpi("Awaiting Software", f"{M['sw_stores']:,}{h(star_sw)}", h(sw_sub),    sw_cls,   sw_arrow),
         _kpi("Fwd Calendar (14d)",str(fwd_count),                f"target {fwd_target}+",                fwd_cls,  fwd_arrow),
     ])
@@ -2230,6 +2232,30 @@ def main():
         f"dups={len(a['dup_names'])}, "
         f"stale-early={len(a['stale_early_funnel'])}"
     )
+
+    # Store data is required, full stop. Earlier behavior substituted a
+    # deal-amount sum for the headline "Active Stores" number (and pace,
+    # weekly delta, projected total, funnel %) whenever the Stores fetch
+    # came back empty, with Ready/Pending falling back to "—". Those two
+    # source numbers disagree by design (deal amounts lag real activation
+    # status) — silently swapping between them is what produced the
+    # ~1,600-store phantom swing in the 2026-07-01 incident. Per decision:
+    # never show false, estimated, or stale numbers. If store data isn't
+    # available, refuse to generate a report at all rather than render one
+    # with numbers that don't mean what their labels say — fail loudly so
+    # the run gets flagged and re-fetched, instead of quietly shipping a
+    # misleading report to stakeholders.
+    if not M["has_store_data"]:
+        print(
+            "ERROR: No Store data available (HubSpot custom-object fetch "
+            "returned no records). Refusing to generate a report — doing so "
+            "would either show '—' for Ready/Pending/Total Stores or, worse, "
+            "silently substitute a deal-amount sum for the Active Stores "
+            "count under the same label. Re-run once the Stores fetch is "
+            "confirmed working.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     pulled_at_str = (parse_dt(payload.get("pulled_at")) or asof).strftime("%Y-%m-%d %H:%M UTC")
     print(f"Rendering HTML…")

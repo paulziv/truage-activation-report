@@ -33,7 +33,9 @@ Token scopes needed:
 import argparse
 import json
 import os
+import random
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -127,26 +129,83 @@ STORE_SEARCH_URL = f"https://api.hubapi.com/crm/v3/objects/{STORE_OBJECT_TYPE}/s
 PAGE_SIZE = 200
 
 
-def hs_post(url, body, headers, *, label=""):
-    """POST to HubSpot. On error, print HTTP body and return None."""
-    resp = requests.post(url, json=body, headers=headers, timeout=30)
-    if resp.status_code != 200:
-        print(f"ERROR ({label}): HubSpot API returned {resp.status_code}",
+MAX_RETRIES = 5
+BASE_BACKOFF_SECONDS = 1.0
+
+
+def _request_with_retry(method, url, headers, *, json_body=None, label=""):
+    """POST/GET to HubSpot with retry + exponential backoff.
+
+    Handles the failure modes that caused the 2026-07-01 incident (a burst
+    of 429s during a shared cron trigger silently produced an empty Stores
+    result, which downstream got treated as valid data). This function
+    NEVER returns None on failure — after exhausting MAX_RETRIES it raises,
+    so callers fail loudly instead of silently degrading. That's
+    deliberate: a report built from partial data is worse than no report,
+    since it can misrepresent real numbers without any visible indication.
+
+    - 429: respects the Retry-After header when HubSpot sends one,
+      otherwise falls back to exponential backoff.
+    - 5xx / network errors: exponential backoff with jitter.
+    - other 4xx: non-retryable, raises immediately (retrying won't help).
+    """
+    last_exc = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            if method == "POST":
+                resp = requests.post(url, json=json_body, headers=headers, timeout=30)
+            else:
+                resp = requests.get(url, headers=headers, timeout=30)
+        except requests.RequestException as exc:
+            last_exc = exc
+            wait = BASE_BACKOFF_SECONDS * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            print(f"WARNING ({label}): network error on attempt {attempt}/{MAX_RETRIES}: {exc}. "
+                  f"Retrying in {wait:.1f}s.", file=sys.stderr)
+            time.sleep(wait)
+            continue
+
+        if resp.status_code == 200:
+            return resp.json()
+
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("Retry-After")
+            wait = float(retry_after) if retry_after else BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            print(f"WARNING ({label}): 429 rate-limited on attempt {attempt}/{MAX_RETRIES} "
+                  f"(Retry-After={retry_after!r}). Waiting {wait:.1f}s.", file=sys.stderr)
+            time.sleep(wait)
+            continue
+
+        if 500 <= resp.status_code < 600:
+            wait = BASE_BACKOFF_SECONDS * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            print(f"WARNING ({label}): HubSpot returned {resp.status_code} on attempt "
+                  f"{attempt}/{MAX_RETRIES}. Retrying in {wait:.1f}s.", file=sys.stderr)
+            print(resp.text, file=sys.stderr)
+            time.sleep(wait)
+            continue
+
+        # Non-retryable client error (400, 401, 403, 404, etc.) — retrying
+        # won't fix a bad token or a malformed request. Fail immediately.
+        print(f"ERROR ({label}): HubSpot API returned {resp.status_code} (non-retryable).",
               file=sys.stderr)
         print(resp.text, file=sys.stderr)
-        return None
-    return resp.json()
+        raise RuntimeError(f"{label}: HubSpot API returned {resp.status_code} (non-retryable)")
+
+    raise RuntimeError(
+        f"{label}: exhausted {MAX_RETRIES} retries against HubSpot API"
+        + (f" (last error: {last_exc})" if last_exc else "")
+    )
+
+
+def hs_post(url, body, headers, *, label=""):
+    """POST to HubSpot with retry/backoff. Raises on failure — never
+    returns None. See _request_with_retry for retry policy."""
+    return _request_with_retry("POST", url, headers, json_body=body, label=label)
 
 
 def hs_get(url, headers, *, label=""):
-    """GET from HubSpot. On error, print HTTP body and return None."""
-    resp = requests.get(url, headers=headers, timeout=30)
-    if resp.status_code != 200:
-        print(f"ERROR ({label}): HubSpot API returned {resp.status_code}",
-              file=sys.stderr)
-        print(resp.text, file=sys.stderr)
-        return None
-    return resp.json()
+    """GET from HubSpot with retry/backoff. Raises on failure — never
+    returns None. See _request_with_retry for retry policy."""
+    return _request_with_retry("GET", url, headers, label=label)
 
 
 def fetch_stage_labels(token):
@@ -163,8 +222,6 @@ def fetch_stage_labels(token):
     }
     url = f"https://api.hubapi.com/crm/v3/pipelines/deals/{PIPELINE_ID}"
     data = hs_get(url, headers, label="pipeline-stages")
-    if data is None:
-        sys.exit(1)
 
     stages = data.get("stages", [])
     if not stages:
@@ -228,8 +285,6 @@ def fetch_all_deals(token):
             body["after"] = after
 
         data = hs_post(DEAL_SEARCH_URL, body, headers, label="deals")
-        if data is None:
-            sys.exit(1)
 
         for r in data.get("results", []):
             props = r.get("properties", {})
@@ -269,12 +324,16 @@ def fetch_all_stores(token):
             body["after"] = after
 
         data = hs_post(STORE_SEARCH_URL, body, headers, label="stores")
-        if data is None:
-            # Stores fetch failure shouldn't kill the whole run — the deal data
-            # is still useful. Print the warning and continue with an empty list.
-            print("WARNING: store fetch failed — continuing with deals only.",
-                  file=sys.stderr)
-            return []
+        # hs_post now raises after exhausting retries rather than returning
+        # None — deliberately. A prior version caught failure here and
+        # returned [] so "the deal data is still useful," but that silently
+        # discarded every page already fetched and let every downstream
+        # metric (Active Stores, Ready, Pending, Total Stores, pace,
+        # funnel %) swap to a differently-defined number with no visible
+        # indication anything was wrong. That's the mechanism behind the
+        # 2026-07-01 incident's ~1,600-store phantom swing. Store data is
+        # now all-or-nothing: either every page comes back, or the whole
+        # pipeline run fails loudly and no report is generated for today.
 
         for r in data.get("results", []):
             props = r.get("properties", {})
