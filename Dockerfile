@@ -11,7 +11,8 @@ COPY requirements.txt .
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 ARG TRUAGE_CORE_PAT
-RUN TRUAGE_CORE_PAT="$TRUAGE_CORE_PAT" pip install -r requirements.txt
+ENV TRUAGE_CORE_PAT=$TRUAGE_CORE_PAT
+RUN pip install -r requirements.txt
 
 COPY . .
 
