@@ -19,17 +19,25 @@ from flask import Flask, Response, jsonify, request, render_template_string
 from dotenv import load_dotenv
 
 import alerting
-import run_history
+# run_history superseded by truage_core.runlog (Phase 2)
 
 load_dotenv()
 
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+from truage_core import logging as tclog, runlog  # noqa: E402
+tclog.configure_stdlib_json(os.environ.get("LOG_LEVEL", "INFO"), service="nacstar")
 log = logging.getLogger("truage-activation")
+try:
+    runlog.init_tables()
+except Exception as _e:  # never block startup on the run/error log
+    log.warning("Could not initialize run/error tables: %s", _e)
 
 app = Flask(__name__)
+
+
+@app.before_request
+def _bind_request_id():
+    """Adopt the caller's correlation id (portal forwards X-Request-ID) or mint one."""
+    tclog.bind_request_id(request.headers.get(tclog.REQUEST_ID_HEADER))
 
 # Paths — use /tmp so they survive between requests but reset on redeploy (fine for reports)
 BASE_DIR   = Path(__file__).resolve().parent
@@ -74,9 +82,10 @@ def run_pipeline() -> None:
             _last_run["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             _last_run["error"]     = None
             log.info("Report generated: %s", REPORT_PATH)
-            run_history.record_run(
-                status="ok",
-                duration_seconds=time.monotonic() - start,
+            runlog.record_run(
+                "nacstar", "activation", "ok",
+                duration_s=time.monotonic() - start,
+                correlation_id=tclog.current_request_id(),
             )
 
         except Exception as exc:
@@ -92,11 +101,12 @@ def run_pipeline() -> None:
             else:
                 kind = "unexpected_error"
 
-            run_history.record_run(
-                status="error",
-                duration_seconds=time.monotonic() - start,
+            runlog.record_run(
+                "nacstar", "activation", "error",
+                duration_s=time.monotonic() - start,
+                correlation_id=tclog.current_request_id(),
                 step=kind,
-                error=msg[:4000],  # keep history entries bounded
+                error=msg[:4000],  # keep entries bounded
             )
             alerting.send_crash_alert(kind, msg, exc)
 
@@ -167,7 +177,7 @@ def history():
     what happened across recent runs beyond what's convenient to scroll through
     in raw Railway logs. Resets on redeploy (stored in /tmp)."""
     limit = request.args.get("limit", default=50, type=int)
-    return jsonify(run_history.recent_runs(limit=limit))
+    return jsonify(runlog.recent_runs(limit=limit, service="nacstar"))
 
 
 @app.route("/")
