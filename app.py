@@ -39,6 +39,17 @@ def _bind_request_id():
     """Adopt the caller's correlation id (portal forwards X-Request-ID) or mint one."""
     tclog.bind_request_id(request.headers.get(tclog.REQUEST_ID_HEADER))
 
+
+@app.after_request
+def _emit_request_id(resp):
+    """Expose the correlation id on the response so gunicorn access logs (via
+    --access-logformat) and the portal can capture it under X-Request-ID."""
+    rid = tclog.current_request_id()
+    if rid:
+        resp.headers[tclog.REQUEST_ID_HEADER] = rid
+    return resp
+
+
 # Paths — EPHEMERAL async buffer, NOT a durable cache. /tmp holds the generated
 # report between async generation and the portal's poll-GET; it resets on redeploy,
 # which is fine. The durable source of truth is the portal's Postgres report_cache
@@ -53,8 +64,15 @@ _last_run: dict = {"status": "never", "timestamp": None, "error": None}
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
-def run_pipeline() -> None:
-    """Fetch from HubSpot then generate the HTML report. Thread-safe."""
+def run_pipeline(correlation_id: str | None = None) -> None:
+    """Fetch from HubSpot then generate the HTML report. Thread-safe.
+
+    Runs in a background thread (startup warm-up or /refresh). Python contextvars
+    do NOT propagate into new threads, so we re-bind the correlation id here to keep
+    request_id present in this thread's logs and in record_run. /refresh forwards the
+    caller's id; startup passes None → a fresh id is minted per run.
+    """
+    tclog.bind_request_id(correlation_id)
     global _last_run
     with _lock:
         _last_run["status"] = "running"
@@ -206,7 +224,10 @@ def refresh():
     if _last_run["status"] == "running":
         return jsonify({"status": "already_running"}), 202
 
-    thread = threading.Thread(target=run_pipeline, daemon=True)
+    rid = tclog.current_request_id()  # capture in the request thread; pass into the worker
+    thread = threading.Thread(
+        target=run_pipeline, kwargs={"correlation_id": rid}, daemon=True
+    )
     thread.start()
 
     # If called from a browser form, redirect back to root

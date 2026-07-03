@@ -21,4 +21,4 @@ RUN mkdir -p /tmp
 
 EXPOSE 5001
 
-CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-5001} --workers 1 --timeout 180 --access-logfile - --error-logfile -"]
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-5001} --workers 1 --timeout 180 --access-logfile - --error-logfile - --access-logformat '%(h)s %(l)s %(u)s %(t)s \"%(r)s\" %(s)s %(b)s \"%(f)s\" \"%(a)s\" rid=%({x-request-id}o)s'"]
