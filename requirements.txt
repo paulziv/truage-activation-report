@@ -3,3 +3,6 @@ gunicorn==21.2.0
 requests==2.31.0
 python-dotenv==1.0.0
 psycopg2-binary==2.9.9  # Postgres adapter, used when DATABASE_URL is set
+
+# Shared library (private repo). Railway expands ${TRUAGE_CORE_PAT} (read-only PAT) at build time.
+truage-core @ git+https://${TRUAGE_CORE_PAT}@github.com/paulziv/truage-core@v0.1.0

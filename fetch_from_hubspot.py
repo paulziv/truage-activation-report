@@ -33,17 +33,9 @@ Token scopes needed:
 import argparse
 import json
 import os
-import random
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-
-try:
-    import requests
-except ImportError:
-    print("ERROR: requests not installed. Run: pip install requests", file=sys.stderr)
-    sys.exit(1)
 
 # ============================================================
 # CONFIG — Retailer Activations pipeline (Deals)
