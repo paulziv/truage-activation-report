@@ -48,7 +48,8 @@ except ImportError:
 # ============================================================
 # CONFIG — Retailer Activations pipeline (Deals)
 # ============================================================
-PIPELINE_ID = "default"
+from truage_core import config
+PIPELINE_ID = config.PIPELINE_ID
 
 # STAGE ROLES — the only stage IDs the report semantically depends on.
 # Labels for ALL stages are pulled dynamically from HubSpot at fetch time
@@ -56,40 +57,9 @@ PIPELINE_ID = "default"
 # specific stages mean "Active", "In Lab", "Awaiting SW", etc. — those
 # semantic assignments live here. If any of these IDs disappears from the
 # pipeline, the fetch fails loudly so we don't silently zero out a KPI.
-STAGE_ROLES = {
-    "active_stage_ids":              ["closedwon"],
-    "in_lab_stage_id":               "1270202953",
-    "awaiting_sw_stage_id":          "1270163972",
-    "awaiting_activation_stage_id":  "1270128498",
-    "awaiting_transactions_stage_id":"1270078996",
-    "onboarding_stage_id":           "contractsent",
-}
+STAGE_ROLES = config.STAGE_ROLES
 
-DEAL_PROPERTIES = [
-    "dealname",
-    "dealstage",
-    "amount",
-    "hubspot_owner_id",
-    "blocked_reason",
-    "createdate",
-    "closedate",
-    "notes_next_activity_date",
-    "hs_v2_date_entered_current_stage",
-    "hs_v2_date_entered_closedwon",
-    "hs_v2_date_entered_closedlost",
-    "hs_v2_date_entered_1270078996",   # Awaiting Transactions
-    "hs_v2_date_entered_1270128498",   # Awaiting Activation
-    "hs_v2_date_entered_1270163972",   # Awaiting SW
-    "hs_v2_date_entered_1270202953",   # In Lab
-    "hs_v2_date_entered_contractsent", # Onboarding Began
-    "hs_v2_date_entered_qualifiedtobuy",
-    "hs_v2_date_entered_appointmentscheduled",
-    "hs_v2_date_entered_presentationscheduled",
-    "hs_v2_date_entered_decisionmakerboughtin",
-    "hs_v2_date_entered_1335845536",   # Parking Lot 3 Other
-    "hs_v2_date_entered_1346410815",   # Leads
-    "hs_v2_date_entered_1350980982",   # Unqualified
-]
+DEAL_PROPERTIES = config.DEAL_PROPERTIES
 
 # ============================================================
 # CONFIG — Stores custom object
@@ -97,7 +67,7 @@ DEAL_PROPERTIES = [
 # Object type ID for the custom Stores object in HubSpot.
 # Find this in HubSpot: Settings → Objects → Custom Objects → click Stores
 # (or it's in the URL of the property settings page: type=2-XXXXXXXX).
-STORE_OBJECT_TYPE = "2-48839355"
+STORE_OBJECT_TYPE = config.STORE_OBJECT_TYPE
 
 # Properties on Store records. Internal names confirmed from HubSpot Settings.
 # Display label → internal name mapping:
@@ -111,18 +81,7 @@ STORE_OBJECT_TYPE = "2-48839355"
 #   DG Store Id         → external_id          (HubSpot internal name)
 #   Owner               → hubspot_owner_id
 #   Object create date  → hs_createdate        (custom objects use hs_ prefix)
-STORE_PROPERTIES = [
-    "status",
-    "is_test_data",
-    "activated_at",
-    "lasttransactiondate",
-    "organization_id",
-    "legal_name",
-    "store_brand_name",
-    "external_id",
-    "hubspot_owner_id",
-    "hs_createdate",
-]
+STORE_PROPERTIES = config.STORE_PROPERTIES
 
 DEAL_SEARCH_URL  = "https://api.hubapi.com/crm/v3/objects/deals/search"
 STORE_SEARCH_URL = f"https://api.hubapi.com/crm/v3/objects/{STORE_OBJECT_TYPE}/search"

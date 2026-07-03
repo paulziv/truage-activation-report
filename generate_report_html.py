@@ -37,29 +37,22 @@ from pathlib import Path
 # ============================================================
 # CONFIG — the only hardcoded numbers
 # ============================================================
-GOAL          = 25_000
-GOAL_DATE_STR = "Dec 31, 2026"
-GOAL_DATE     = datetime(2026, 12, 31, tzinfo=timezone.utc)
+from truage_core import config
+GOAL = config.GOAL
+GOAL_DATE_STR = config.GOAL_DATE_STR
+GOAL_DATE = config.GOAL_DATE
 HUBSPOT_BASE  = "https://app.hubspot.com/contacts/46513369/record/0-3"
 
-TEST_SUBSTRING_PATTERNS = [
-    "thinksys", "qrjwxjqsbuxciwmljofcd", "demo unit",
-    "homeless not helpless", "muhammad hassan", "mendietaaaa", "bunny palace",
-]
-TEST_EXACT_NAMES = {
-    "tester", "self employed", "send proud", "rita", "pan", "na", "clover",
-}
+from truage_core import testrecords as _tr  # test-record rules now live in truage-core
+TEST_SUBSTRING_PATTERNS = _tr.TEST_SUBSTRING_PATTERNS
+TEST_EXACT_NAMES = _tr.TEST_EXACT_NAMES
 VENDOR_PATTERNS = {
     "Verifone (Commander)": ["verifone", "commander"],
     "NCR (Radiant)":        ["ncr", "radiant"],
     "Invenco":              ["invenco"],
     "Gilbarco":             ["gilbarco"],
 }
-EARLY_FUNNEL_STAGES = {
-    "1346410815", "1350980982", "qualifiedtobuy",
-    "appointmentscheduled", "presentationscheduled",
-    "decisionmakerboughtin", "1335845536",
-}
+EARLY_FUNNEL_STAGES = config.EARLY_FUNNEL_STAGES
 
 # ============================================================
 # HELPERS
@@ -149,13 +142,7 @@ class Deal:
         return (asof - self.entered_current).days
 
     def is_test_record(self):
-        n = self.name.strip().lower()
-        if not n:
-            return False
-        normalized = n.split(" - new deal")[0].strip()
-        if normalized in TEST_EXACT_NAMES:
-            return True
-        return any(p in n for p in TEST_SUBSTRING_PATTERNS)
+        return _tr.is_test_deal(self.name)
 
     def amount_missing(self):
         return self.amount_raw in (None, "")
@@ -227,11 +214,7 @@ def compute_metrics(payload, deals, asof):
     M["stores_total"]   = len(stores)
 
     def is_test_store(s):
-        # For Store records, the is_test_data field is authoritative.
-        # Do NOT apply name-pattern matching here — a store named
-        # "Thinksys-Test-Store-1" with is_test_data=false is a real
-        # store that ops has explicitly marked as non-test. Trust the field.
-        return (s.get("is_test_data") or "").lower() == "true"
+        return _tr.is_test_store(s)
 
     real_stores = [s for s in stores if not is_test_store(s)]
     test_stores = [s for s in stores if is_test_store(s)]
