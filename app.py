@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, request, render_template_string
+from flask import Flask, Response, jsonify, request, render_template_string, redirect, url_for
 from dotenv import load_dotenv
 
 import alerting
@@ -39,7 +39,10 @@ def _bind_request_id():
     """Adopt the caller's correlation id (portal forwards X-Request-ID) or mint one."""
     tclog.bind_request_id(request.headers.get(tclog.REQUEST_ID_HEADER))
 
-# Paths — use /tmp so they survive between requests but reset on redeploy (fine for reports)
+# Paths — EPHEMERAL async buffer, NOT a durable cache. /tmp holds the generated
+# report between async generation and the portal's poll-GET; it resets on redeploy,
+# which is fine. The durable source of truth is the portal's Postgres report_cache
+# (see pez-portal/app/daily_cache.py). Do not treat these files as authoritative.
 BASE_DIR   = Path(__file__).resolve().parent
 PULL_PATH  = Path("/tmp/hubspot_pull.json")
 REPORT_PATH = Path("/tmp/latest_report.html")
@@ -208,12 +211,12 @@ def refresh():
 
     # If called from a browser form, redirect back to root
     if request.method == "POST" and "text/html" in request.headers.get("Accept", ""):
-        from flask import redirect, url_for
         return redirect(url_for("index"))
 
     return jsonify({"status": "started"})
 
 
 if __name__ == "__main__":
+    # Local dev only; on Railway the app runs under gunicorn (see Procfile/Dockerfile).
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
