@@ -1,0 +1,5 @@
+# throwaway characterization run artifacts — never commit
+baseline/
+candidate/
+candidate_*/
+cassette*.json
